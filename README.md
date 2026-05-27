@@ -13,26 +13,34 @@ Any device uploads
     ↓
 HAProxy VM (routing + rate limit)
     ↓
-NAS AI Service (Docker)
-  ├── MIME vs extension validation
-  ├── Entropy analysis (>7.2 = suspicious — encrypted/packed)
-  ├── Isolation Forest (zero-label, detects anomalous feature patterns)
-  └── (Phase 2) LightGBM + CatBoost — EMBER pre-trained PE/EXE classifier
-    ↓ clean          ↓ suspicious / malicious
-  Route to NAS    Quarantine + Telegram alert
+NAS AI Service (Docker) — 4-stage pipeline
+  │
+  ├─ Stage 1: Extension blocklist (exe/dll/ps1/bat/vbs … instant reject)
+  ├─ Stage 2: MIME detection (libmagic — catches renamed executables)
+  ├─ Stage 3: Entropy analysis (>7.2 → packed/encrypted = suspicious)
+  └─ Stage 4: Isolation Forest (anomaly scoring, online learning)
+  │
+  ↓ clean              ↓ suspicious          ↓ blocked (malicious)
+Route to NAS        Quarantine            HTTP 400 — rejected
+                    HTTP 202              Never touches NAS
+                    TG alert              TG alert
 
 NAS-A / NAS-B / NAS-C (firewall allows writes from this service only)
 ```
 
 ---
 
-## Verdicts
+## Verdicts & HTTP responses
 
-| Verdict | Meaning | Action |
-|---------|---------|--------|
-| `clean` | All checks passed | Routed to target NAS path |
-| `suspicious` | ≥1 signal (high entropy OR MIME mismatch OR anomaly) | Quarantined + TG alert |
-| `malicious` | Multiple signals fire together | Quarantined + TG alert |
+| Verdict | HTTP | Blocked | Action |
+|---------|------|---------|--------|
+| `clean` | 200 | No | Routed to target NAS path |
+| `suspicious` | 202 | No* | Quarantined + TG alert (ops review) |
+| `malicious` | 400 | **Yes** | Quarantined + TG alert — upload rejected |
+
+\* `suspicious` is also blocked (400) when entropy AND mime_mismatch both fire simultaneously — two independent signals = high confidence.
+
+**Blocking** means the file never reaches NAS storage. The client gets an explicit HTTP 4xx so the uploader knows the transfer was rejected.
 
 ---
 

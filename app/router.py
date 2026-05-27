@@ -20,19 +20,24 @@ class FileRouter:
         ext = Path(filename).suffix.lower().lstrip(".")
         return ext in allowed_types
 
-    def route(self, tmp_path: Path, filename: str, target_name: str, verdict: str) -> Path:
-        if verdict in ("suspicious", "malicious"):
-            dest_dir = self.quarantine_path
-        else:
-            target = self.targets.get(target_name)
-            if not target:
-                raise ValueError(f"Unknown target: {target_name}")
-            dest_dir = Path(target["path"])
-
+    def route(self, tmp_path: Path, filename: str, target_name: str) -> Path:
+        """Move clean file to target NAS path."""
+        target = self.targets.get(target_name)
+        if not target:
+            raise ValueError(f"Unknown target: {target_name}")
+        dest_dir = Path(target["path"])
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = _unique(dest_dir / filename)
         shutil.move(str(tmp_path), dest)
-        log.info("routed %s → %s (verdict=%s)", filename, dest, verdict)
+        log.info("routed %s → %s", filename, dest)
+        return dest
+
+    def quarantine(self, tmp_path: Path, filename: str) -> Path:
+        """Move blocked/suspicious file to quarantine. Never touches NAS paths."""
+        self.quarantine_path.mkdir(parents=True, exist_ok=True)
+        dest = _unique(self.quarantine_path / filename)
+        shutil.move(str(tmp_path), dest)
+        log.warning("quarantined %s → %s", filename, dest)
         return dest
 
 
