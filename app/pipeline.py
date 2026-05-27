@@ -74,12 +74,15 @@ def _save_if():
 class AnalysisResult:
     def __init__(self, filename: str, size: int):
         self.filename = filename
-        self.size = size
+        self.extension = Path(filename).suffix.lower().lstrip(".")
+        self.file_size = size
         self.verdict = "clean"          # clean | suspicious | malicious
-        self.blocked = False            # True = reject upload entirely
+        self.blocked = False
         self.reasons: list[str] = []
         self.entropy: float = 0.0
         self.detected_mime: str | None = None
+        self.declared_mime: str | None = None
+        self.mime_match: bool = True
         self.if_score: float | None = None
         self.stages_run: list[str] = []
 
@@ -90,17 +93,38 @@ class AnalysisResult:
         ):
             self.verdict = escalate_to
 
-    def to_dict(self) -> dict:
+    def to_es_event(self, source_ip: str, nas_user: str, target: str, profile: str = "standard") -> dict:
+        """Build the exact payload expected by the nas-ai-events ES schema."""
         return {
-            "filename": self.filename,
-            "size": self.size,
-            "verdict": self.verdict,
-            "blocked": self.blocked,
-            "reasons": self.reasons,
-            "entropy": self.entropy,
+            "source_ip":      source_ip,
+            "nas_user":       nas_user.lower(),
+            "target":         target,
+            "profile":        profile,
+            "filename":       self.filename,
+            "extension":      self.extension,
+            "file_size":      self.file_size,
+            "detected_mime":  self.detected_mime or "",
+            "declared_mime":  self.declared_mime or "",
+            "mime_match":     self.mime_match,
+            "entropy":        round(self.entropy, 4),
+            "verdict":        self.verdict,
+            "blocked":        self.blocked,
+            "reasons":        self.reasons,
+            "stages_run":     self.stages_run,
+        }
+
+    def to_dict(self) -> dict:
+        """Legacy dict for Telegram notifier."""
+        return {
+            "filename":      self.filename,
+            "size":          self.file_size,
+            "verdict":       self.verdict,
+            "blocked":       self.blocked,
+            "reasons":       self.reasons,
+            "entropy":       self.entropy,
             "detected_mime": self.detected_mime,
-            "if_score": self.if_score,
-            "stages_run": self.stages_run,
+            "if_score":      self.if_score,
+            "stages_run":    self.stages_run,
         }
 
 
@@ -181,12 +205,15 @@ class AnalysisPipeline:
         }
         expected = EXT_MIME_MAP.get(ext)
         if expected and detected != expected:
+            result.mime_match = False
             result.flag(f"mime_mismatch: ext=.{ext} expected={expected} detected={detected}")
 
         # Declared type vs actual
         if declared_type and declared_type != "application/octet-stream":
             declared_norm = declared_type.split(";")[0].strip().lower()
-            if detected != declared_norm and f"mime_mismatch" not in " ".join(result.reasons):
+            result.declared_mime = declared_norm
+            if detected != declared_norm and "mime_mismatch" not in " ".join(result.reasons):
+                result.mime_match = False
                 result.flag(f"mime_mismatch: declared={declared_norm} detected={detected}")
 
     # ── Stage 3: entropy ─────────────────────────────────────────────────────

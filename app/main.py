@@ -4,12 +4,13 @@ import tempfile
 from pathlib import Path
 
 import yaml
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from app.pipeline import AnalysisPipeline
 from app.notifier import send_telegram
 from app.router import FileRouter
+from app.es_sender import send_event
 
 logging.basicConfig(
     level=logging.INFO,
@@ -48,11 +49,14 @@ def health():
 
 @app.post("/upload")
 async def upload(
+    request: Request,
     file: UploadFile = File(...),
     target: str = Query(..., description="Target name defined in config.yaml"),
     declared_type: str | None = Query(None, description="MIME type claimed by client"),
+    nas_user: str = Query("anonymous", description="Username reported by the client"),
 ):
     cfg, pipeline, router = _get_deps()
+    source_ip = request.client.host if request.client else "unknown"
 
     max_bytes = cfg["server"].get("max_file_mb", 500) * 1024 * 1024
     data = await file.read(max_bytes + 1)
@@ -99,6 +103,12 @@ async def upload(
             tmp_path.unlink(missing_ok=True)
             raise HTTPException(500, str(e)) from e
 
+    # ── Send event to Logstash → ES ───────────────────────────────────────────
+    ls_url = cfg.get("logstash", {}).get("url")
+    if ls_url:
+        profile = cfg["targets"].get(target, {}).get("profile", "standard")
+        send_event(ls_url, result.to_es_event(source_ip, nas_user, target, profile))
+
     # ── Telegram notification ─────────────────────────────────────────────────
     tg = cfg.get("telegram", {})
     notify_on: list[str] = tg.get("notify_on", [])
@@ -124,8 +134,11 @@ async def upload(
             "filename": filename,
             "target": target,
             "dest": dest,
+            "file_size": result.file_size,
             "entropy": result.entropy,
             "detected_mime": result.detected_mime,
+            "declared_mime": result.declared_mime,
+            "mime_match": result.mime_match,
             "if_score": result.if_score,
             "reasons": result.reasons,
             "stages_run": result.stages_run,

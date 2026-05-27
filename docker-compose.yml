@@ -7,10 +7,13 @@ services:
       - "8900:8900"
     volumes:
       - ./config.yaml:/config/config.yaml:ro
-      - /mnt:/mnt                       # NAS mount points
       - nas-ai-data:/data               # Isolation Forest model persistence
+      - nas-ai-incoming:/mnt/incoming   # local incoming dir (replace with NAS mount in prod)
+      - nas-ai-quarantine:/mnt/quarantine
     environment:
       - NAS_AI_CONFIG=/config/config.yaml
 
 volumes:
   nas-ai-data:
+  nas-ai-incoming:
+  nas-ai-quarantine:

@@ -6,17 +6,25 @@ server:
   port: 8900
   max_file_mb: 500
 
+# Logstash HTTP input — sends analysis events to ES (nas-ai-events-*)
+# Remove or leave empty to disable ES logging
+logstash:
+  url: "http://172.16.32.35:10544"
+
 # File routing targets
 # 'path' can be a local dir or a NAS mount point — no difference
+# profile: strict | standard | fast | archive  (controls which pipeline stages run)
 targets:
   home:
     path: "/mnt/nas-home/incoming"
+    profile: "standard"
     allowed_types: ["*"]          # * = accept all passing files
   company:
     path: "/mnt/nas-company/uploads"
+    profile: "strict"
     allowed_types: ["pdf", "docx", "xlsx", "pptx", "txt", "csv", "jpg", "png"]
 
-# Quarantine path for suspicious files (kept for manual review)
+# Quarantine path for suspicious/blocked files (kept for manual review)
 quarantine_path: "/mnt/quarantine"
 
 # ML thresholds
