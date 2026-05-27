@@ -1,0 +1,16 @@
+services:
+  nas-ai:
+    build: .
+    container_name: nas-ai
+    restart: unless-stopped
+    ports:
+      - "8900:8900"
+    volumes:
+      - ./config.yaml:/config/config.yaml:ro
+      - /mnt:/mnt                       # NAS mount points
+      - nas-ai-data:/data               # Isolation Forest model persistence
+    environment:
+      - NAS_AI_CONFIG=/config/config.yaml
+
+volumes:
+  nas-ai-data:

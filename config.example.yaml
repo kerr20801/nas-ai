@@ -1,0 +1,33 @@
+# NAS AI — config.example.yaml
+# Copy to config.yaml and fill in your values.
+
+server:
+  host: "0.0.0.0"
+  port: 8900
+  max_file_mb: 500
+
+# File routing targets
+# 'path' can be a local dir or a NAS mount point — no difference
+targets:
+  home:
+    path: "/mnt/nas-home/incoming"
+    allowed_types: ["*"]          # * = accept all passing files
+  company:
+    path: "/mnt/nas-company/uploads"
+    allowed_types: ["pdf", "docx", "xlsx", "pptx", "txt", "csv", "jpg", "png"]
+
+# Quarantine path for suspicious files (kept for manual review)
+quarantine_path: "/mnt/quarantine"
+
+# ML thresholds
+ml:
+  entropy_threshold: 7.2          # > this = suspicious (encrypted/packed)
+  isolation_forest_contamination: 0.05   # expected anomaly ratio
+  isolation_forest_min_samples: 30       # start scoring after N files seen
+  malicious_score_threshold: -0.1        # IF score below this = anomaly
+
+# Telegram notification
+telegram:
+  bot_token: "YOUR_BOT_TOKEN"
+  chat_id: "YOUR_CHAT_ID"
+  notify_on: ["suspicious", "malicious", "mime_mismatch"]  # or add "clean"
