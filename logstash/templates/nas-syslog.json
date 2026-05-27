@@ -1,0 +1,36 @@
+{
+  "index_patterns": ["nas-syslog-*"],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 1,
+      "index.refresh_interval": "10s"
+    },
+    "mappings": {
+      "dynamic": "strict",
+      "properties": {
+        "@timestamp":   { "type": "date" },
+        "nas_host":     { "type": "keyword" },
+        "program":      { "type": "keyword" },
+        "source_ip":    { "type": "ip" },
+        "nas_user":     { "type": "keyword" },
+        "auth_method":  { "type": "keyword" },
+        "operation":    { "type": "keyword" },
+        "share":        { "type": "keyword" },
+        "path":         { "type": "keyword" },
+        "new_path":     { "type": "keyword" },
+        "filename":     { "type": "keyword" },
+        "extension":    { "type": "keyword" },
+        "file_size":    { "type": "long" },
+        "hour_of_day":  { "type": "byte" },
+        "day_of_week":  { "type": "byte" },
+        "is_off_hours": { "type": "boolean" },
+        "tags":         { "type": "keyword" }
+      }
+    }
+  },
+  "priority": 100,
+  "_meta": {
+    "description": "Synology DSM syslog — NAS AI project"
+  }
+}

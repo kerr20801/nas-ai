@@ -1,0 +1,30 @@
+# Synology syslog raw operation string → normalized vocabulary
+# Used by logstash translate filter in 01-nas-syslog.conf
+#
+# Rule: when in doubt, map to the simpler verb.
+# "unknown" is the fallback — keeps the event but flags it for review.
+
+renamed:                rename
+moved:                  rename
+created:                create
+uploaded:               create
+"create file":          create
+"upload file":          create
+deleted:                delete
+removed:                delete
+"delete file":          delete
+read:                   read
+downloaded:             read
+accessed:               read
+"read file":            read
+"download file":        read
+modified:               write
+written:                write
+wrote:                  write
+"modify file":          write
+"logged in successfully": login_ok
+"failed to log in":     login_fail
+"login success":        login_ok
+"login failed":         login_fail
+mounted:                mount
+unmounted:              unmount

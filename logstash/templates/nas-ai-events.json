@@ -1,0 +1,40 @@
+{
+  "index_patterns": ["nas-ai-events-*"],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 1,
+      "index.refresh_interval": "10s"
+    },
+    "mappings": {
+      "dynamic": "strict",
+      "properties": {
+        "@timestamp":     { "type": "date" },
+        "source_ip":      { "type": "ip" },
+        "nas_user":       { "type": "keyword" },
+        "target":         { "type": "keyword" },
+        "profile":        { "type": "keyword" },
+        "filename":       { "type": "keyword" },
+        "extension":      { "type": "keyword" },
+        "file_size":      { "type": "long" },
+        "detected_mime":  { "type": "keyword" },
+        "declared_mime":  { "type": "keyword" },
+        "mime_match":     { "type": "boolean" },
+        "entropy":        { "type": "float" },
+        "clamav_verdict": { "type": "keyword" },
+        "verdict":        { "type": "keyword" },
+        "blocked":        { "type": "boolean" },
+        "reasons":        { "type": "keyword" },
+        "stages_run":     { "type": "keyword" },
+        "hour_of_day":    { "type": "byte" },
+        "day_of_week":    { "type": "byte" },
+        "is_off_hours":   { "type": "boolean" },
+        "tags":           { "type": "keyword" }
+      }
+    }
+  },
+  "priority": 100,
+  "_meta": {
+    "description": "NAS AI upload analysis events — NAS AI project"
+  }
+}

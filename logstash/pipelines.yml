@@ -1,0 +1,20 @@
+# Logstash pipelines — NAS AI project
+# Deploy to: /usr/share/logstash/config/pipelines.yml  (or merge into existing)
+#
+# Volume mounts needed (docker-compose or k8s):
+#   ./logstash/pipeline/  → /usr/share/logstash/pipeline/
+#   ./logstash/dict/      → /usr/share/logstash/dict/
+#   ./logstash/templates/ → /usr/share/logstash/templates/
+#
+# Environment variables:
+#   ES_PASSWORD = Elk@Lab2026!  (set in .env, never commit)
+
+- pipeline.id: nas-syslog
+  path.config: "/usr/share/logstash/pipeline/01-nas-syslog.conf"
+  pipeline.workers: 2
+  pipeline.batch.size: 500
+
+- pipeline.id: nas-ai-events
+  path.config: "/usr/share/logstash/pipeline/02-nas-ai-events.conf"
+  pipeline.workers: 1
+  pipeline.batch.size: 50
