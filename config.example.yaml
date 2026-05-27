@@ -27,6 +27,13 @@ targets:
 # Quarantine path for suspicious/blocked files (kept for manual review)
 quarantine_path: "/mnt/quarantine"
 
+# ClamAV sidecar (Stage 5 — only runs for 'strict' profile)
+# If clamd is unavailable, the scan is skipped (non-fatal) — upload still proceeds.
+clamav:
+  host: "clamav"    # Docker service name; use IP if running externally
+  port: 3310
+  timeout: 15       # seconds
+
 # ML thresholds
 ml:
   entropy_threshold: 7.2          # > this = suspicious (encrypted/packed)

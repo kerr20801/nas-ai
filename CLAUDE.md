@@ -25,19 +25,32 @@ docker logs -f nas-ai
 
 ### `app/pipeline.py` — core analysis
 
-Single class `AnalysisPipeline.run()` executes 4 stages in order; all stages always run (full audit trail even after early escalation):
+`AnalysisPipeline.run(data, filename, declared_type, profile)` selects stages via `_PROFILE_STAGES`:
+
+| Profile | Stages |
+|---------|--------|
+| `fast` | 1 + 2 |
+| `standard` | 1 + 2 + 3 + 4 |
+| `strict` | 1 + 2 + 3 + 4 + **5** |
+| `archive` | 1 + 2 + 3 |
 
 1. **Stage 1 – Extension blocklist**: instant `malicious` for exe/dll/bat/ps1/vbs/js etc.
 2. **Stage 2 – MIME check**: `python-magic` detects actual type; flags mismatch vs declared type or extension
 3. **Stage 3 – Entropy**: Shannon entropy > threshold → `suspicious`
 4. **Stage 4 – Isolation Forest**: 8-feature vector (size, entropy, null\_ratio, printable\_ratio, PE/ELF/script/archive flags); model trains online and persists to `/data/isolation_forest.joblib`
+5. **Stage 5 – ClamAV** (strict only): INSTREAM TCP scan via `app/clamav.py`; virus hit → `malicious`; clamd unavailable → non-fatal warning, upload proceeds
 
 Blocking rule in `run()`:
 - `malicious` verdict → always blocked (HTTP 400)
 - `suspicious` with both `high_entropy` AND `mime_mismatch` reasons → also blocked (HTTP 400)
 - `suspicious` with single signal → quarantine only (HTTP 202)
 
-`AnalysisResult.to_es_event()` produces the exact payload for the ES schema. `to_dict()` is the legacy format for the TG notifier.
+`AnalysisResult.to_es_event()` produces the exact payload for the ES schema (includes `clamav_verdict`). `to_dict()` is the legacy format for the TG notifier.
+
+### `app/clamav.py` — ClamAV INSTREAM scanner
+
+`scan(data, host, port, timeout)` — sends bytes to `clamd` via INSTREAM protocol over TCP.
+Returns: `"clean"` | `"virus:<name>"` | `"error:<reason>"`. Never raises.
 
 ### `app/main.py` — FastAPI endpoint
 
@@ -58,8 +71,9 @@ After pipeline: calls `send_event()` (fire-and-forget, never blocks upload), the
 `config.yaml` (gitignored) is mounted at `/config/config.yaml` inside the container. Copy from `config.example.yaml`. Key sections:
 
 - `logstash.url` — HTTP endpoint for Logstash `nas-ai-events` pipeline (default: `http://172.16.32.35:10544`)
-- `targets[name].profile` — passed through to ES event for future profile-driven pipeline logic
+- `targets[name].profile` — controls which pipeline stages run (`fast`/`standard`/`strict`/`archive`)
 - `ml.isolation_forest_min_samples` — IF doesn't score until this many files seen (default 30)
+- `clamav.host` / `clamav.port` — clamd TCP address (default: `clamav:3310`, the Docker service name)
 
 ## ELK stack (Logstash on 172.16.32.35)
 
@@ -83,3 +97,5 @@ Logstash source files in `logstash/` are the canonical reference; deployed confi
 - Logstash ECS mode injects `@version`, `host`, `event`, `url`, `user_agent`, `http` fields. These must be stripped in the filter `remove_field` step or ES strict mapping rejects the document.
 - `if [type]` conditions in the Logstash output block fail silently when `type` is removed in the filter cleanup step — use unconditional output blocks in single-pipeline configs.
 - The IF model trains in-process. In multi-worker uvicorn (`--workers N`), each worker has its own model state. Keep `--workers 1` or move model state to a shared store before scaling.
+- ClamAV first-start downloads ~300 MB of virus definitions. `depends_on: service_healthy` ensures nas-ai waits. `start_period: 120s` in the healthcheck gives it time.
+- ClamAV unavailability is non-fatal by design — `error:unavailable` is logged but does not block the upload. This prevents clamd restart/update from taking the upload service down.

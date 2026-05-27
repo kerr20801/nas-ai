@@ -68,8 +68,9 @@ async def upload(
     if not router.allowed(target, filename):
         raise HTTPException(415, f"File type not allowed for target '{target}'")
 
-    # ── Run the 4-stage pipeline ──────────────────────────────────────────────
-    result = pipeline.run(data, filename, declared_type)
+    # ── Run the pipeline (profile-driven stage selection) ────────────────────
+    profile = cfg["targets"].get(target, {}).get("profile", "standard")
+    result = pipeline.run(data, filename, declared_type, profile=profile)
     verdict = result.verdict
     blocked = result.blocked
 
@@ -106,7 +107,6 @@ async def upload(
     # ── Send event to Logstash → ES ───────────────────────────────────────────
     ls_url = cfg.get("logstash", {}).get("url")
     if ls_url:
-        profile = cfg["targets"].get(target, {}).get("profile", "standard")
         send_event(ls_url, result.to_es_event(source_ip, nas_user, target, profile))
 
     # ── Telegram notification ─────────────────────────────────────────────────
@@ -140,6 +140,7 @@ async def upload(
             "declared_mime": result.declared_mime,
             "mime_match": result.mime_match,
             "if_score": result.if_score,
+            "clamav_verdict": result.clamav_verdict,
             "reasons": result.reasons,
             "stages_run": result.stages_run,
         },

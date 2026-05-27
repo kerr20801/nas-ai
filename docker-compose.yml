@@ -1,8 +1,25 @@
 services:
+  clamav:
+    image: clamav/clamav:stable
+    container_name: nas-ai-clamav
+    restart: unless-stopped
+    volumes:
+      - clamav-db:/var/lib/clamav
+    environment:
+      - CLAMAV_NO_FRESHCLAMD=false   # keep definitions updated
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 60s
+      retries: 3
+      start_period: 120s             # first DB download can take a while
+
   nas-ai:
     build: .
     container_name: nas-ai
     restart: unless-stopped
+    depends_on:
+      clamav:
+        condition: service_healthy
     ports:
       - "8900:8900"
     volumes:
@@ -14,6 +31,7 @@ services:
       - NAS_AI_CONFIG=/config/config.yaml
 
 volumes:
+  clamav-db:
   nas-ai-data:
   nas-ai-incoming:
   nas-ai-quarantine:
