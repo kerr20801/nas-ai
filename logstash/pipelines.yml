@@ -18,3 +18,4 @@
   path.config: "/usr/share/logstash/pipeline/02-nas-ai-events.conf"
   pipeline.workers: 1
   pipeline.batch.size: 50
+  # HTTP input port: 10544  (5044 reserved for Filebeat/Auditbeat Beats protocol)
