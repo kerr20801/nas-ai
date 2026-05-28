@@ -5,30 +5,37 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Running the service
 
 ```bash
-# Build and start
+# Build and start (first run pulls ClamAV image + ~300 MB definitions)
 docker compose up -d --build
 
 # Health check
 curl http://localhost:8900/health
 
-# Test upload
+# Test upload — clean file to standard profile target
 curl -X POST "http://localhost:8900/upload?target=home&nas_user=alice" \
   -F "file=@/path/to/file.pdf"
 
+# Test ClamAV detection (strict profile) — EICAR test string
+printf 'X5O!P%%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' > /tmp/eicar.txt
+curl -X POST "http://localhost:8900/upload?target=company&nas_user=alice" \
+  -F "file=@/tmp/eicar.txt"
+# Expected: verdict=malicious, blocked=true, clamav_verdict="virus:Eicar-Test-Signature"
+
 # Logs
 docker logs -f nas-ai
+docker logs -f nas-ai-clamav
 ```
 
 ## Architecture
 
-**Request flow:** `POST /upload` → `pipeline.py` (4 stages) → `router.py` (move file) → `es_sender.py` (async event) + `notifier.py` (TG)
+**Request flow:** `POST /upload` → `router.allowed()` (415 if type denied) → `pipeline.run()` (profile-driven stages) → `router.route/quarantine()` → `es_sender.send_event()` (fire-and-forget) → `notifier.send_telegram()` (if configured)
 
 ### `app/pipeline.py` — core analysis
 
 `AnalysisPipeline.run(data, filename, declared_type, profile)` selects stages via `_PROFILE_STAGES`:
 
-| Profile | Stages |
-|---------|--------|
+| Profile | Stages run |
+|---------|-----------|
 | `fast` | 1 + 2 |
 | `standard` | 1 + 2 + 3 + 4 |
 | `strict` | 1 + 2 + 3 + 4 + **5** |
@@ -40,40 +47,47 @@ docker logs -f nas-ai
 4. **Stage 4 – Isolation Forest**: 8-feature vector (size, entropy, null\_ratio, printable\_ratio, PE/ELF/script/archive flags); model trains online and persists to `/data/isolation_forest.joblib`
 5. **Stage 5 – ClamAV** (strict only): INSTREAM TCP scan via `app/clamav.py`; virus hit → `malicious`; clamd unavailable → non-fatal warning, upload proceeds
 
-Blocking rule in `run()`:
-- `malicious` verdict → always blocked (HTTP 400)
-- `suspicious` with both `high_entropy` AND `mime_mismatch` reasons → also blocked (HTTP 400)
+Blocking rule:
+- `malicious` → always blocked (HTTP 400)
+- `suspicious` with both `high_entropy` AND `mime_mismatch` → also blocked (HTTP 400)
 - `suspicious` with single signal → quarantine only (HTTP 202)
 
-`AnalysisResult.to_es_event()` produces the exact payload for the ES schema (includes `clamav_verdict`). `to_dict()` is the legacy format for the TG notifier.
+`AnalysisResult.to_es_event()` produces the exact ES schema payload (includes `clamav_verdict`). `to_dict()` is the legacy format for the TG notifier.
 
 ### `app/clamav.py` — ClamAV INSTREAM scanner
 
-`scan(data, host, port, timeout)` — sends bytes to `clamd` via INSTREAM protocol over TCP.
+`scan(data, host, port, timeout)` — streams bytes to `clamd` over TCP.
 Returns: `"clean"` | `"virus:<name>"` | `"error:<reason>"`. Never raises.
 
 ### `app/main.py` — FastAPI endpoint
 
-`/upload` takes `file`, `target` (required), `declared_type` (optional MIME claim), `nas_user` (defaults to `"anonymous"`). Source IP comes from `Request.client.host`.
+`/upload` takes `file`, `target` (required), `declared_type` (optional MIME claim), `nas_user` (defaults to `"anonymous"`). Source IP from `Request.client.host`.
 
-After pipeline: calls `send_event()` (fire-and-forget, never blocks upload), then `send_telegram()` if verdict matches `notify_on`.
+`_get_deps()` lazy-initialises config, pipeline, and router once per worker process on first request — not at import time.
 
 ### `app/router.py` — file routing
 
-`FileRouter.route()` moves clean files to `targets[name].path`; `FileRouter.quarantine()` moves blocked/suspicious files to `quarantine_path`. Both use `shutil.move` so paths can be local dirs or NAS mount points interchangeably.
+`FileRouter.allowed(target, filename)` runs **before** the pipeline — a type rejection returns HTTP 415, not a pipeline verdict. `allowed_types: ["*"]` accepts everything.
+
+`FileRouter.route()` moves clean files to `targets[name].path`; `quarantine()` moves blocked/suspicious files to `quarantine_path`. Both use `shutil.move` (works with local dirs or NAS mount points). `_unique()` appends `_1`, `_2` … on filename collision.
+
+### `app/notifier.py` — Telegram alert
+
+`send_telegram()` reads `result.to_dict()` (legacy format, not `to_es_event()`). Sends HTML-formatted message via `curl -4`. Only fires when `verdict in notify_on` and `bot_token` is set and not the placeholder string.
 
 ### `app/es_sender.py` — Logstash event
 
-`send_event(url, payload)` — `subprocess.run` curl with 3s timeout. Never raises. URL configured via `config.yaml logstash.url`. If omitted, ES logging is silently skipped.
+`send_event(url, payload)` — `subprocess.run` curl with 3s timeout. Never raises. If `logstash.url` is missing from config, ES logging is silently skipped.
 
 ## Config
 
 `config.yaml` (gitignored) is mounted at `/config/config.yaml` inside the container. Copy from `config.example.yaml`. Key sections:
 
-- `logstash.url` — HTTP endpoint for Logstash `nas-ai-events` pipeline (default: `http://172.16.32.35:10544`)
 - `targets[name].profile` — controls which pipeline stages run (`fast`/`standard`/`strict`/`archive`)
-- `ml.isolation_forest_min_samples` — IF doesn't score until this many files seen (default 30)
+- `targets[name].allowed_types` — extension whitelist; `["*"]` accepts all
+- `logstash.url` — HTTP endpoint for Logstash `nas-ai-events` pipeline (omit to disable ES logging)
 - `clamav.host` / `clamav.port` — clamd TCP address (default: `clamav:3310`, the Docker service name)
+- `ml.isolation_forest_min_samples` — IF doesn't score until this many files seen (default 30)
 
 ## ELK stack (Logstash on 172.16.32.35)
 

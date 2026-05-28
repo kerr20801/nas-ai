@@ -134,9 +134,9 @@ The Isolation Forest model is trained online — it learns from every file it se
 
 ## Roadmap
 
-- **Phase 1** (current): FastAPI + MIME + Entropy + Isolation Forest + Telegram + file routing
-- **Phase 2**: LightGBM EMBER pre-trained model + CatBoost + multi-NAS config routing
-- **Phase 3**: Sensitive data detection (PII/credentials) + duplicate detection + auto-retraining
+- **Phase 1** ✅: FastAPI + MIME + Entropy + Isolation Forest + Telegram + file routing
+- **Phase 2** ✅: ClamAV sidecar (Stage 5) + profile-driven pipeline (`fast`/`standard`/`strict`/`archive`)
+- **Phase 3**: Sensitive data detection (PII/credentials) + duplicate detection (SHA-256 dedup)
 
 ---
 
