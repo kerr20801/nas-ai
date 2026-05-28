@@ -21,6 +21,12 @@ curl -X POST "http://localhost:8900/upload?target=company&nas_user=alice" \
   -F "file=@/tmp/eicar.txt"
 # Expected: verdict=malicious, blocked=true, clamav_verdict="virus:Eicar-Test-Signature"
 
+# Test DLP detection (standard/strict) — private key
+printf '-----BEGIN RSA PRIVATE KEY-----\nMIIEo...\n-----END RSA PRIVATE KEY-----\n' > /tmp/test_key.txt
+curl -X POST "http://localhost:8900/upload?target=home&nas_user=alice" \
+  -F "file=@/tmp/test_key.txt"
+# Expected: verdict=suspicious, blocked=false, dlp_findings=[{type:private_key,count:1}]
+
 # Logs
 docker logs -f nas-ai
 docker logs -f nas-ai-clamav
@@ -37,8 +43,8 @@ docker logs -f nas-ai-clamav
 | Profile | Stages run |
 |---------|-----------|
 | `fast` | 1 + 2 |
-| `standard` | 1 + 2 + 3 + 4 |
-| `strict` | 1 + 2 + 3 + 4 + **5** |
+| `standard` | 1 + 2 + 3 + 4 + **6** |
+| `strict` | 1 + 2 + 3 + 4 + **5** + **6** |
 | `archive` | 1 + 2 + 3 |
 
 1. **Stage 1 – Extension blocklist**: instant `malicious` for exe/dll/bat/ps1/vbs/js etc.
@@ -46,18 +52,38 @@ docker logs -f nas-ai-clamav
 3. **Stage 3 – Entropy**: Shannon entropy > threshold → `suspicious`
 4. **Stage 4 – Isolation Forest**: 8-feature vector (size, entropy, null\_ratio, printable\_ratio, PE/ELF/script/archive flags); model trains online and persists to `/data/isolation_forest.joblib`
 5. **Stage 5 – ClamAV** (strict only): INSTREAM TCP scan via `app/clamav.py`; virus hit → `malicious`; clamd unavailable → non-fatal warning, upload proceeds
+6. **Stage 6 – DLP** (standard + strict): text-content scan via `app/dlp.py`; findings → `suspicious` (never blocks); binary formats skipped
 
 Blocking rule:
 - `malicious` → always blocked (HTTP 400)
 - `suspicious` with both `high_entropy` AND `mime_mismatch` → also blocked (HTTP 400)
-- `suspicious` with single signal → quarantine only (HTTP 202)
+- `suspicious` with single signal (including DLP) → quarantine only (HTTP 202)
 
-`AnalysisResult.to_es_event()` produces the exact ES schema payload (includes `clamav_verdict`). `to_dict()` is the legacy format for the TG notifier.
+`AnalysisResult.to_es_event()` produces the exact ES schema payload (includes `clamav_verdict`, `dlp_findings`). `to_dict()` is the legacy format for the TG notifier.
 
 ### `app/clamav.py` — ClamAV INSTREAM scanner
 
 `scan(data, host, port, timeout)` — streams bytes to `clamd` over TCP.
 Returns: `"clean"` | `"virus:<name>"` | `"error:<reason>"`. Never raises.
+
+### `app/dlp.py` — DLP scanner
+
+`scan(data, filename)` — regex + checksum scan on text-extractable content (txt/csv/json/yaml/env/py/sh/pem/sql etc.). Binary extensions are skipped entirely. Scans up to 512 KB.
+
+Patterns detected:
+
+| Type | Method |
+|------|--------|
+| `private_key` | PEM header regex |
+| `aws_key` | `AKIA…` prefix |
+| `github_token` | `ghp_` / `github_pat_` prefix |
+| `api_credential` | key/token assignment in config files |
+| `plaintext_password` | password= / passwd= / pwd= assignment |
+| `jwt` | three-segment base64url pattern |
+| `credit_card` | digit run + **Luhn checksum** |
+| `taiwan_id` | letter+digit format + **checksum algorithm** |
+
+Returns `[{"type": str, "count": int}, ...]`. Never raises.
 
 ### `app/main.py` — FastAPI endpoint
 
