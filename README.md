@@ -13,12 +13,14 @@ Any device uploads
     ↓
 HAProxy VM (routing + rate limit)
     ↓
-NAS AI Service (Docker) — 4-stage pipeline
+NAS AI Service (Docker) — profile-driven pipeline
   │
   ├─ Stage 1: Extension blocklist (exe/dll/ps1/bat/vbs … instant reject)
   ├─ Stage 2: MIME detection (libmagic — catches renamed executables)
   ├─ Stage 3: Entropy analysis (>7.2 → packed/encrypted = suspicious)
-  └─ Stage 4: Isolation Forest (anomaly scoring, online learning)
+  ├─ Stage 4: Isolation Forest (anomaly scoring, online learning)
+  ├─ Stage 5: ClamAV virus scan  ← strict profile only
+  └─ Stage 6: DLP sensitive data ← standard + strict profiles
   │
   ↓ clean              ↓ suspicious          ↓ blocked (malicious)
 Route to NAS        Quarantine            HTTP 400 — rejected
@@ -76,11 +78,13 @@ curl -X POST "http://localhost:8900/upload?target=company&declared_type=applicat
   "entropy": 5.231,
   "detected_mime": "application/pdf",
   "if_score": 0.12,
+  "clamav_verdict": "clean",
+  "dlp_findings": [],
   "reasons": []
 }
 ```
 
-HTTP 200 = clean, HTTP 202 = suspicious/malicious (file quarantined).
+HTTP 200 = clean, HTTP 202 = suspicious (quarantined), HTTP 400 = malicious (blocked).
 
 ---
 
@@ -120,15 +124,19 @@ Adding a new NAS: add a new entry under `targets` and map its mount point. No co
 
 ## Detection signals
 
-| Signal | How | Threshold |
-|--------|-----|-----------|
-| **High entropy** | Shannon entropy on raw bytes | > 7.2 (packed/encrypted) |
-| **MIME mismatch** | libmagic detection vs declared type | any mismatch |
-| **Isolation Forest** | Anomaly score on 8 features (size, entropy, null ratio, printable ratio, PE/ELF/script/archive flags) | score < -0.1 |
+| Signal | Stage | Verdict | How |
+|--------|-------|---------|-----|
+| **Blocked extension** | 1 | malicious | exe/dll/bat/ps1/vbs/js etc. — instant reject |
+| **Dangerous MIME** | 2 | malicious | libmagic detects PE/ELF regardless of extension |
+| **MIME mismatch** | 2 | suspicious | declared or extension type ≠ detected type |
+| **High entropy** | 3 | suspicious | Shannon entropy > 7.2 (packed/encrypted content) |
+| **Isolation Forest** | 4 | suspicious/malicious | anomaly on 8-feature vector; anomaly + another signal → malicious |
+| **Virus signature** | 5 | malicious | ClamAV INSTREAM scan (strict profile only) |
+| **Sensitive data** | 6 | suspicious | credentials / PII in text files (standard + strict) |
 
-Verdict escalation: anomaly + (entropy OR mime) → `malicious`. Any single signal → `suspicious`.
+**DLP patterns (Stage 6):** private keys, AWS/GitHub tokens, API credentials, plaintext passwords, JWTs, credit cards (Luhn validated), Taiwan national IDs (checksum validated). Only scans text-extractable formats (txt/csv/json/yaml/env/py/sh/pem…); binary files skipped.
 
-The Isolation Forest model is trained online — it learns from every file it sees and saves the model to a Docker volume. Cold-start: first 30 files are scored but not by IF (uses entropy + MIME only).
+The Isolation Forest model trains online — it learns from every uploaded file and persists to a Docker volume. Cold-start: first 30 files bypass IF scoring.
 
 ---
 
@@ -136,7 +144,7 @@ The Isolation Forest model is trained online — it learns from every file it se
 
 - **Phase 1** ✅: FastAPI + MIME + Entropy + Isolation Forest + Telegram + file routing
 - **Phase 2** ✅: ClamAV sidecar (Stage 5) + profile-driven pipeline (`fast`/`standard`/`strict`/`archive`)
-- **Phase 3**: Sensitive data detection (PII/credentials) + duplicate detection (SHA-256 dedup)
+- **Phase 3** ✅: DLP sensitive data detection — credentials (private key/AWS/GitHub/JWT) + Taiwan PII (ID checksum + credit card Luhn)
 
 ---
 
