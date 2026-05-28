@@ -141,6 +141,7 @@ async def upload(
             "mime_match": result.mime_match,
             "if_score": result.if_score,
             "clamav_verdict": result.clamav_verdict,
+            "dlp_findings": result.dlp_findings,
             "reasons": result.reasons,
             "stages_run": result.stages_run,
         },

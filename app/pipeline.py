@@ -15,7 +15,7 @@ import numpy as np
 import joblib
 from sklearn.ensemble import IsolationForest
 
-from app import clamav
+from app import clamav, dlp
 
 log = logging.getLogger(__name__)
 
@@ -87,6 +87,7 @@ class AnalysisResult:
         self.mime_match: bool = True
         self.if_score: float | None = None
         self.clamav_verdict: str | None = None
+        self.dlp_findings: list[dict] = []
         self.stages_run: list[str] = []
 
     def flag(self, reason: str, escalate_to: str = "suspicious"):
@@ -113,6 +114,7 @@ class AnalysisResult:
             "verdict":        self.verdict,
             "blocked":        self.blocked,
             "clamav_verdict": self.clamav_verdict or "",
+            "dlp_findings":   self.dlp_findings,
             "reasons":        self.reasons,
             "stages_run":     self.stages_run,
         }
@@ -136,8 +138,8 @@ class AnalysisResult:
 # stage3=entropy  stage4=isolation_forest  stage5=clamav
 _PROFILE_STAGES: dict[str, set[str]] = {
     "fast":     {"stage1", "stage2"},
-    "standard": {"stage1", "stage2", "stage3", "stage4"},
-    "strict":   {"stage1", "stage2", "stage3", "stage4", "stage5"},
+    "standard": {"stage1", "stage2", "stage3", "stage4", "stage6"},
+    "strict":   {"stage1", "stage2", "stage3", "stage4", "stage5", "stage6"},
     "archive":  {"stage1", "stage2", "stage3"},
 }
 
@@ -174,6 +176,8 @@ class AnalysisPipeline:
             self._stage4_isolation_forest(result, data, filename)
         if "stage5" in stages:
             self._stage5_clamav(result, data)
+        if "stage6" in stages:
+            self._stage6_dlp(result, data, filename)
 
         # Blocking rule: malicious verdict always blocks.
         # suspicious verdict blocks only when entropy AND mime_mismatch both fired
@@ -301,3 +305,15 @@ class AnalysisPipeline:
             log.warning("stage5 ClamAV error (non-fatal): %s", verdict)
         else:
             log.debug("stage5 ClamAV clean: %s", result.filename)
+
+    # ── Stage 6: DLP ──────────────────────────────────────────────────────────
+    def _stage6_dlp(self, result: AnalysisResult, data: bytes, filename: str):
+        result.stages_run.append("dlp")
+        findings = dlp.scan(data, filename)
+        if not findings:
+            return
+
+        result.dlp_findings = findings
+        types = [f["type"] for f in findings]
+        result.flag(f"dlp: {', '.join(types)}", escalate_to="suspicious")
+        log.warning("stage6 DLP hit: %s — %s", filename, types)
