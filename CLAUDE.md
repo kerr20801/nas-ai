@@ -40,17 +40,18 @@ docker logs -f nas-ai-clamav
 
 `AnalysisPipeline.run(data, filename, declared_type, profile)` selects stages via `_PROFILE_STAGES`:
 
-| Profile | Stages run |
+| Profile | Stages run (0/1/2 always) |
 |---------|-----------|
-| `fast` | 1 + 2 |
-| `standard` | 1 + 2 + 3 + 4 + **6** |
-| `strict` | 1 + 2 + 3 + 4 + **5** + **6** |
-| `archive` | 1 + 2 + 3 |
+| `fast` | 0 + 1 + 2 |
+| `standard` | 0 + 1 + 2 + 3 + 4 + **6** |
+| `strict` | 0 + 1 + 2 + 3 + 4 + **5** + **6** |
+| `archive` | 0 + 1 + 2 + 3 |
 
+0. **Stage 0 – Hash blocklist**: SHA256 computed for every file (stored on `result.sha256`); match against `security.hash_blocklist_file` → instant `malicious`. Loaded once in `AnalysisPipeline.__init__` via `_load_blocklist()`.
 1. **Stage 1 – Extension blocklist**: instant `malicious` for exe/dll/bat/ps1/vbs/js etc.
 2. **Stage 2 – MIME check**: `python-magic` detects actual type; flags mismatch vs declared type or extension
-3. **Stage 3 – Entropy**: Shannon entropy > threshold → `suspicious`
-4. **Stage 4 – Isolation Forest**: 8-feature vector (size, entropy, null\_ratio, printable\_ratio, PE/ELF/script/archive flags); model trains online and persists to `/data/isolation_forest.joblib`
+3. **Stage 3 – Entropy**: Shannon entropy > threshold → `suspicious`. **Skipped as a signal for `_COMPRESSED_EXTS`** (zip/jpg/png/mp4/docx/pdf…) — those are expected to be high-entropy; value still recorded. Without this, every image/Office doc would be quarantined.
+4. **Stage 4 – Isolation Forest**: 8-feature vector (size, entropy, null\_ratio, printable\_ratio, PE/ELF/script/archive flags). **Trains only on samples that pass clean** (`result.verdict == "clean"`) — never learns flagged files as normal (anti-poisoning). **Refits lazily** every `isolation_forest_retrain_interval` clean samples (default 50), not per-upload. Model + training buffer persist to `/data/isolation_forest.joblib` + `/data/if_samples.joblib`.
 5. **Stage 5 – ClamAV** (strict only): INSTREAM TCP scan via `app/clamav.py`; virus hit → `malicious`; clamd unavailable → non-fatal warning, upload proceeds
 6. **Stage 6 – DLP** (standard + strict): text-content scan via `app/dlp.py`; findings → `suspicious` (never blocks); binary formats skipped
 
@@ -59,7 +60,7 @@ Blocking rule:
 - `suspicious` with both `high_entropy` AND `mime_mismatch` → also blocked (HTTP 400)
 - `suspicious` with single signal (including DLP) → quarantine only (HTTP 202)
 
-`AnalysisResult.to_es_event()` produces the exact ES schema payload (includes `clamav_verdict`, `dlp_findings`). `to_dict()` is the legacy format for the TG notifier.
+`AnalysisResult.to_es_event()` produces the exact ES schema payload (includes `sha256`, `clamav_verdict`, `dlp_findings`). `to_dict()` is the legacy format for the TG notifier. The `nas-ai-events` ES template (`logstash/templates/`) maps `sha256` (keyword) and `dlp_findings` (object: type/count) — both are required because the template is `dynamic: strict` and would otherwise reject events carrying them.
 
 ### `app/clamav.py` — ClamAV INSTREAM scanner
 
@@ -78,7 +79,7 @@ Patterns detected:
 | `aws_key` | `AKIA…` prefix |
 | `github_token` | `ghp_` / `github_pat_` prefix |
 | `api_credential` | key/token assignment in config files |
-| `plaintext_password` | password= / passwd= / pwd= assignment |
+| `plaintext_password` | `\b(password|passwd|pwd)\b` = single-token value (8–64 chars); `_password_val()` discards placeholders (`required`, `${VAR}`, `<password>`…) |
 | `jwt` | three-segment base64url pattern |
 | `credit_card` | digit run + **Luhn checksum** |
 | `taiwan_id` | letter+digit format + **checksum algorithm** |
@@ -113,7 +114,9 @@ Returns `[{"type": str, "count": int}, ...]`. Never raises.
 - `targets[name].allowed_types` — extension whitelist; `["*"]` accepts all
 - `logstash.url` — HTTP endpoint for Logstash `nas-ai-events` pipeline (omit to disable ES logging)
 - `clamav.host` / `clamav.port` — clamd TCP address (default: `clamav:3310`, the Docker service name)
+- `security.hash_blocklist_file` — Stage 0 SHA256 blocklist path (one hex digest per line; omit to disable)
 - `ml.isolation_forest_min_samples` — IF doesn't score until this many files seen (default 30)
+- `ml.isolation_forest_retrain_interval` — refit cadence in new clean samples (default 50)
 
 ## ELK stack (Logstash on 172.16.32.35)
 
@@ -136,6 +139,7 @@ Logstash source files in `logstash/` are the canonical reference; deployed confi
 - Port **5044** is reserved for Beats (Filebeat/Auditbeat). Use **10544** for the HTTP input.
 - Logstash ECS mode injects `@version`, `host`, `event`, `url`, `user_agent`, `http` fields. These must be stripped in the filter `remove_field` step or ES strict mapping rejects the document.
 - `if [type]` conditions in the Logstash output block fail silently when `type` is removed in the filter cleanup step — use unconditional output blocks in single-pipeline configs.
-- The IF model trains in-process. In multi-worker uvicorn (`--workers N`), each worker has its own model state. Keep `--workers 1` or move model state to a shared store before scaling.
+- The IF model trains in-process (clean samples only) and persists model + training buffer to the `nas-ai-data` Docker volume (`/data/isolation_forest.joblib` + `/data/if_samples.joblib`). In multi-worker uvicorn (`--workers N`), each worker has its own in-memory model state. Keep `--workers 1` or move model state to a shared store before scaling.
+- Stage 3 entropy is intentionally **not** a signal for compressed/encrypted container formats (`_COMPRESSED_EXTS` in `pipeline.py`). If you add a new always-compressed type, add its extension there or it will be quarantined on every upload.
 - ClamAV first-start downloads ~300 MB of virus definitions. `depends_on: service_healthy` ensures nas-ai waits. `start_period: 120s` in the healthcheck gives it time.
 - ClamAV unavailability is non-fatal by design — `error:unavailable` is logged but does not block the upload. This prevents clamd restart/update from taking the upload service down.

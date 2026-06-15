@@ -59,6 +59,26 @@ def _taiwan_id(s: str) -> bool:
     return sum(d * w for d, w in zip(digits, _TW_ID_WEIGHTS)) % 10 == 0
 
 
+# Common non-secret values assigned to password-like keys — discard these to
+# cut false positives from code/config/docs.
+_PASSWORD_PLACEHOLDERS = {
+    "none", "null", "nil", "true", "false", "required", "optional",
+    "changeme", "password", "passwd", "secret", "your_password",
+    "yourpassword", "xxxxxx", "example", "redacted", "todo", "test",
+    "${password}", "{{password}}", "<password>", "***",
+}
+
+
+def _password_val(s: str) -> bool:
+    """Reject obvious placeholders / template vars assigned to password keys."""
+    low = s.strip().lower()
+    if low in _PASSWORD_PLACEHOLDERS:
+        return False
+    if low.startswith(("$", "{", "<", "%")) or low.endswith(("}", ">")):
+        return False  # ${VAR}, {{var}}, <placeholder>, %ENV%
+    return True
+
+
 # ── pattern registry ──────────────────────────────────────────────────────────
 # Each entry: (finding_type, compiled_regex, optional_validator)
 # Validator receives the full match string; return False to discard.
@@ -91,10 +111,12 @@ _PATTERNS: list[tuple[str, re.Pattern, object]] = [
         None,
     ),
     # Plain password assignment (password= / passwd= / pwd=)
+    # \b around the key avoids matching password_field / my_pwd_hint;
+    # value is a single token (no spaces) of 8+ chars; placeholders filtered.
     (
         "plaintext_password",
-        re.compile(r"(?i)(?:password|passwd|pwd)\s*[=:]\s*[\"']?(?!\*{3,})(.{6,30})[\"']?"),
-        None,
+        re.compile(r"(?i)\b(?:password|passwd|pwd)\b\s*[=:]\s*[\"']?([^\s\"']{8,64})[\"']?"),
+        _password_val,
     ),
     # JWT (three base64url segments)
     (

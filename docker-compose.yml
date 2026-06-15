@@ -24,6 +24,7 @@ services:
       - "8900:8900"
     volumes:
       - ./config.yaml:/config/config.yaml:ro
+      - ./hash_blocklist.txt:/config/hash_blocklist.txt:ro   # Stage 0 blocklist (cp from .example)
       - nas-ai-data:/data               # Isolation Forest model persistence
       - nas-ai-incoming:/mnt/incoming   # local incoming dir (replace with NAS mount in prod)
       - nas-ai-quarantine:/mnt/quarantine

@@ -17,6 +17,7 @@
         "filename":       { "type": "keyword" },
         "extension":      { "type": "keyword" },
         "file_size":      { "type": "long" },
+        "sha256":         { "type": "keyword" },
         "detected_mime":  { "type": "keyword" },
         "declared_mime":  { "type": "keyword" },
         "mime_match":     { "type": "boolean" },
@@ -26,6 +27,13 @@
         "blocked":        { "type": "boolean" },
         "reasons":        { "type": "keyword" },
         "stages_run":     { "type": "keyword" },
+        "dlp_findings":   {
+          "type": "object",
+          "properties": {
+            "type":  { "type": "keyword" },
+            "count": { "type": "integer" }
+          }
+        },
         "hour_of_day":    { "type": "byte" },
         "day_of_week":    { "type": "byte" },
         "is_off_hours":   { "type": "boolean" },

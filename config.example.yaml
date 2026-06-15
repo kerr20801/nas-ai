@@ -34,11 +34,28 @@ clamav:
   port: 3310
   timeout: 15       # seconds
 
+security:
+  # API key — when set, every /upload must send a matching `X-API-Key` header
+  # (else HTTP 401). Leave as the placeholder / omit to disable auth.
+  api_key: "YOUR_API_KEY"
+
+  # Known-bad hash blocklist (Stage 0). One lowercase sha256 hex digest per line,
+  # '#' for comments. Matched files are rejected instantly (verdict=malicious),
+  # cheaper than ClamAV. Leave unset to disable.
+  hash_blocklist_file: "/config/hash_blocklist.txt"
+
+  # Archive / zip-bomb guard (Stage 7). Generous enough for legit zip/docx/xlsx,
+  # but rejects classic decompression bombs. A hit is verdict=malicious.
+  archive_max_ratio: 150              # uncompressed ÷ compressed
+  archive_max_uncompressed_mb: 2048   # total uncompressed size cap
+  archive_max_entries: 100000         # file-count cap (zip-of-many-files bomb)
+
 # ML thresholds
 ml:
   entropy_threshold: 7.2          # > this = suspicious (encrypted/packed)
   isolation_forest_contamination: 0.05   # expected anomaly ratio
   isolation_forest_min_samples: 30       # start scoring after N files seen
+  isolation_forest_retrain_interval: 50  # refit once every N new clean samples
   malicious_score_threshold: -0.1        # IF score below this = anomaly
 
 # Telegram notification

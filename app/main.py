@@ -58,6 +58,13 @@ async def upload(
     cfg, pipeline, router = _get_deps()
     source_ip = request.client.host if request.client else "unknown"
 
+    # Optional API-key auth — enforced only when security.api_key is configured.
+    api_key = cfg.get("security", {}).get("api_key")
+    if api_key and api_key != "YOUR_API_KEY":
+        if request.headers.get("x-api-key") != api_key:
+            log.warning("auth rejected: target=%s src=%s", target, source_ip)
+            raise HTTPException(401, "Invalid or missing X-API-Key header")
+
     max_bytes = cfg["server"].get("max_file_mb", 500) * 1024 * 1024
     data = await file.read(max_bytes + 1)
     if len(data) > max_bytes:
@@ -82,10 +89,10 @@ async def upload(
     # ── Routing ───────────────────────────────────────────────────────────────
     dest: str | None = None
 
-    if blocked:
-        # File never reaches NAS — quarantine if suspicious-but-blocked,
-        # or just discard buffer if malicious (no disk trace on NAS).
-        # We still quarantine so ops team can review.
+    # Only clean files reach the NAS. Anything not clean (suspicious OR malicious)
+    # is quarantined for review — upholds the core principle that bad/uncertain
+    # files never land on NAS storage (a DLP-flagged secret must not be routed).
+    if verdict != "clean":
         with tempfile.NamedTemporaryFile(delete=False, suffix=Path(filename).suffix) as tmp:
             tmp.write(data)
             tmp_path = Path(tmp.name)
@@ -135,6 +142,7 @@ async def upload(
             "target": target,
             "dest": dest,
             "file_size": result.file_size,
+            "sha256": result.sha256,
             "entropy": result.entropy,
             "detected_mime": result.detected_mime,
             "declared_mime": result.declared_mime,
