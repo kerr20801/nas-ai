@@ -7,6 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 # Build and start (first run pulls ClamAV image + ~300 MB definitions)
 docker compose up -d --build
+# If the build can't reach deb.debian.org (BuildKit networking — see Gotchas):
+#   DOCKER_BUILDKIT=0 docker compose build && docker compose up -d --no-build
 
 # Health check
 curl http://localhost:8900/health
@@ -143,3 +145,4 @@ Logstash source files in `logstash/` are the canonical reference; deployed confi
 - Stage 3 entropy is intentionally **not** a signal for compressed/encrypted container formats (`_COMPRESSED_EXTS` in `pipeline.py`). If you add a new always-compressed type, add its extension there or it will be quarantined on every upload.
 - ClamAV first-start downloads ~300 MB of virus definitions. `depends_on: service_healthy` ensures nas-ai waits. `start_period: 120s` in the healthcheck gives it time.
 - ClamAV unavailability is non-fatal by design — `error:unavailable` is logged but does not block the upload. This prevents clamd restart/update from taking the upload service down.
+- **BuildKit build can't reach apt mirrors on some hosts** (e.g. the 172.16.32.23 relay): `docker compose build` fails with `Unable to connect to deb.debian.org` while the host and ordinary `docker run` containers have working network. BuildKit's build sandbox uses a separate network namespace that doesn't inherit the daemon's DNS/egress. Fix: build with the legacy builder — `DOCKER_BUILDKIT=0 docker compose build && docker compose up -d --no-build` — or `docker build --network=host -t nas-ai-nas-ai .`. (Permanent option: add `"dns": ["8.8.8.8"]` to `/etc/docker/daemon.json` and restart dockerd — affects all containers, needs a daemon restart.)
