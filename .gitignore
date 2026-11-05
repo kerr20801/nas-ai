@@ -1,0 +1,9 @@
+config.yaml
+config.yaml.bak*
+hash_blocklist.txt
+__pycache__/
+*.pyc
+*.pyo
+.env
+*.log
+data/

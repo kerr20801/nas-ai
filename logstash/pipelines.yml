@@ -1,0 +1,23 @@
+# Logstash pipelines — NAS AI project
+# Deploy to: /usr/share/logstash/config/pipelines.yml  (or merge into existing)
+#
+# Deploy paths (192.0.2.35):
+#   ./logstash/pipeline/01-nas-syslog.conf   → /etc/logstash/conf.d/nas-syslog.conf
+#   ./logstash/pipeline/02-nas-ai-events.conf → /etc/logstash/conf.d/nas-ai-events.conf
+#   ./logstash/dict/      → /etc/logstash/dict/
+#   ./logstash/templates/ → /etc/logstash/templates/
+#
+# Index templates are installed manually by elastic superuser (syslog role lacks manage_index_templates).
+# ES_PASSWORD in deployed configs is hardcoded (syslog user).
+# Syslog input: UDP/TCP 5514 (not 514 — privileged port, non-root Logstash cannot bind)
+
+- pipeline.id: nas-syslog
+  path.config: "/etc/logstash/conf.d/nas-syslog.conf"
+  pipeline.workers: 2
+  pipeline.batch.size: 500
+
+- pipeline.id: nas-ai-events
+  path.config: "/etc/logstash/conf.d/nas-ai-events.conf"
+  pipeline.workers: 1
+  pipeline.batch.size: 50
+  # HTTP input port: 10544  (5044 reserved for Filebeat/Auditbeat Beats protocol)

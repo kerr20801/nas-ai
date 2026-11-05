@@ -1,0 +1,9 @@
+# NAS AI — known-bad hash blocklist (Stage 0)
+# One lowercase sha256 hex digest per line. '#' starts a comment.
+# Anything after the digest on a line is ignored, so you can annotate:
+#   <sha256>  optional note
+# Copy to hash_blocklist.txt (mounted at /config/hash_blocklist.txt) and append
+# digests of known-malicious files. Matches are rejected instantly (malicious).
+#
+# Example (sha256 of the literal string "this-is-a-known-bad-file-sample"):
+# 117531475567fdf2... (truncated — put the full 64-char digest here)
